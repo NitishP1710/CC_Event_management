@@ -23,7 +23,7 @@ This guide walks you through deploying both the backend (Express + Node) and the
      - SSH (TCP 22) from your IP
      - HTTP (TCP 80) from 0.0.0.0/0
      - HTTPS (TCP 443) from 0.0.0.0/0
-     - (Optional) custom port 5000 if you want direct backend access (recommended to proxy through Nginx instead)
+   - (Optional) custom port 5050 if you want direct backend access (recommended to proxy through Nginx instead)
 
 2. SSH into the instance:
 
@@ -61,7 +61,7 @@ npm install
 # Create .env file with required variables
 cat > .env << EOF
 MONGODB_URI=your_mongodb_atlas_connection_string_here
-PORT=5000
+PORT=5050
 NODE_ENV=production
 EOF
 
@@ -100,33 +100,30 @@ pm2 status
 cd ../frontend
 npm install
 npm run build
-
-# Copy dist to nginx served directory
-sudo mkdir -p /var/www/event-frontend
-sudo chown $USER:$USER /var/www/event-frontend
-cp -r dist/* /var/www/event-frontend/
 ```
 
-Create an Nginx server block:
+After the build finishes, the React app will be available in `/home/ubuntu/Student-Record/frontend/dist`.
+
+## 9. Configure Nginx (Serve React + Proxy /api)
+
+Create the Nginx site config:
+
+```bash
+sudo nano /etc/nginx/sites-available/student-record
+```
+
+Paste this config:
 
 ```nginx
-# /etc/nginx/sites-available/event-app
 server {
     listen 80;
-    server_name _;  # Replace with yourdomain.com later
+    server_name _;
 
-    # Serve frontend
-    root /var/www/event-frontend;
+    root /home/ubuntu/Student-Record/frontend/dist;
     index index.html;
 
-    # React Router: redirect all non-file requests to index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Proxy API requests to backend (Node.js running on port 5000)
     location /api/ {
-        proxy_pass http://localhost:5000/api/;
+        proxy_pass http://127.0.0.1:5050;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -136,15 +133,21 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
     }
+
+    location / {
+        try_files $uri /index.html;
+    }
 }
 ```
 
-Enable and test Nginx:
+Enable the site and reload Nginx:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/event-app /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/student-record /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl restart nginx
+sudo systemctl enable nginx
 ```
 
 ## Enable HTTPS (Certbot)
@@ -160,7 +163,7 @@ sudo certbot --nginx -d yourdomain.com
 
 ```
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/event_db?retryWrites=true&w=majority
-PORT=5000
+PORT=5050
 NODE_ENV=production
 ```
 
@@ -175,7 +178,7 @@ pm2 logs event-backend
 sudo systemctl status nginx
 
 # Test API endpoint
-curl http://localhost:5000/api/events
+curl http://127.0.0.1:5050/api/events
 
 # Test frontend is served
 curl http://localhost/
@@ -184,7 +187,7 @@ curl http://localhost/
 **Access your application:**
 
 - Frontend: `http://EC2_PUBLIC_IP` or `http://yourdomain.com`
-- API directly (if needed): `http://EC2_PUBLIC_IP:5000/api/events`
+- API directly (if needed): `http://EC2_PUBLIC_IP:5050/api/events`
 - All API calls from frontend should go through `http://yourdomain.com/api/`
 
 ## Maintenance & Scaling
@@ -204,12 +207,12 @@ curl http://localhost/
 
 - Verify Nginx config: `sudo nginx -t`
 - Restart Nginx: `sudo systemctl restart nginx`
-- Check frontend files are copied: `ls -la /var/www/event-frontend/`
+- Check frontend build exists: `ls -la /home/ubuntu/Student-Record/frontend/dist/`
 
 **API calls failing (CORS or 502 errors):**
 
 - Verify backend is running: `pm2 status`
-- Check backend is listening on 5000: `netstat -tlnp | grep 5000`
+- Check backend is listening on 5050: `netstat -tlnp | grep 5050`
 - Review Nginx proxy configuration and logs: `sudo tail -f /var/log/nginx/error.log`
 
 **Enable SSH key authentication:**
