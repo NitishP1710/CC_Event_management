@@ -52,63 +52,88 @@ sudo npm install -g pm2
 cd /var/www
 sudo mkdir event-app && sudo chown $USER:$USER event-app
 cd event-app
-git clone https://github.com/your/repo.git .
-# Backend
+git clone https://github.com/NitishP1710/CC_Event_management.git .
+
+# Backend setup
 cd backend
 npm install
-# Copy .env and update MONGODB_URI to your Atlas string
-cp .env.example .env
-# Edit .env: set MONGODB_URI, JWT_SECRET, PORT (5000)
+
+# Create .env file with required variables
+cat > .env << EOF
+MONGODB_URI=your_mongodb_atlas_connection_string_here
+PORT=5000
+NODE_ENV=production
+EOF
+
+# Edit .env: replace MONGODB_URI with your actual MongoDB Atlas connection string
+nano .env
 ```
 
 ## Backend: Start with PM2
 
 ```bash
-# from backend/ directory
-pm run build || true   # only if you have any build step; not required for this express server
-pm run dev # optional to test
+# From backend/ directory
+npm install  # if not already done
+
 # Start production with pm2
-pm start # or: pm2 start src/index.js --name event-backend
+pm2 start src/index.js --name event-backend
+# or if you prefer using npm start script:
+# pm2 start npm --name event-backend -- start
+
+# Save PM2 process list and enable auto-start on reboot
 pm2 save
-pm2 startup  # follow printed instructions to enable on boot
+pm2 startup
+# Follow the printed instructions to enable PM2 on system boot
 ```
 
-> Note: prefer `pm2 start npm --name "event-backend" -- start` if you use `npm start` script.
+View logs:
+
+```bash
+pm2 logs event-backend
+pm2 status
+```
 
 ## Frontend: Build & Nginx Configuration
 
 ```bash
-# From project root or frontend/
+# From project root
 cd ../frontend
 npm install
 npm run build
+
 # Copy dist to nginx served directory
 sudo mkdir -p /var/www/event-frontend
-sudo cp -r dist/* /var/www/event-frontend/
+sudo chown $USER:$USER /var/www/event-frontend
+cp -r dist/* /var/www/event-frontend/
 ```
 
-Create an Nginx server block (example):
+Create an Nginx server block:
 
 ```nginx
 # /etc/nginx/sites-available/event-app
 server {
     listen 80;
-    server_name yourdomain.com; # or EC2_PUBLIC_IP
+    server_name _;  # Replace with yourdomain.com later
 
+    # Serve frontend
     root /var/www/event-frontend;
     index index.html;
 
+    # React Router: redirect all non-file requests to index.html
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # Proxy API requests to backend
+    # Proxy API requests to backend (Node.js running on port 5000)
     location /api/ {
         proxy_pass http://localhost:5000/api/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
     }
 }
@@ -131,15 +156,71 @@ sudo certbot --nginx -d yourdomain.com
 
 ## Final Notes & Verification
 
-- Ensure `backend/.env` contains a properly URL-encoded password in `MONGODB_URI` and the correct Atlas host.
-- Verify backend logs: `pm2 logs event-backend`.
-- Verify Nginx: `sudo systemctl status nginx`.
-- Test frontend at `http://yourdomain.com` and API at `http://yourdomain.com/api/events`.
+**Backend environment variables** (`backend/.env`):
+
+```
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/event_db?retryWrites=true&w=majority
+PORT=5000
+NODE_ENV=production
+```
+
+**Verification checklist:**
+
+```bash
+# Check backend is running
+pm2 status
+pm2 logs event-backend
+
+# Check Nginx is running
+sudo systemctl status nginx
+
+# Test API endpoint
+curl http://localhost:5000/api/events
+
+# Test frontend is served
+curl http://localhost/
+```
+
+**Access your application:**
+
+- Frontend: `http://EC2_PUBLIC_IP` or `http://yourdomain.com`
+- API directly (if needed): `http://EC2_PUBLIC_IP:5000/api/events`
+- All API calls from frontend should go through `http://yourdomain.com/api/`
 
 ## Maintenance & Scaling
 
 - For more capacity, move backend to separate instance and use load balancers.
 - Use CloudWatch or other monitoring to track performance.
+
+## Troubleshooting
+
+**Backend not connecting to MongoDB:**
+
+- Verify Atlas connection string in `backend/.env`
+- Ensure IP address is whitelisted in Atlas cluster settings (or allow 0.0.0.0/0 for testing)
+- Check PM2 logs: `pm2 logs event-backend`
+
+**Frontend shows 404 errors:**
+
+- Verify Nginx config: `sudo nginx -t`
+- Restart Nginx: `sudo systemctl restart nginx`
+- Check frontend files are copied: `ls -la /var/www/event-frontend/`
+
+**API calls failing (CORS or 502 errors):**
+
+- Verify backend is running: `pm2 status`
+- Check backend is listening on 5000: `netstat -tlnp | grep 5000`
+- Review Nginx proxy configuration and logs: `sudo tail -f /var/log/nginx/error.log`
+
+**Enable SSH key authentication:**
+
+```bash
+# On your local machine
+ssh-copy-id -i ~/.ssh/id_rsa.pub ubuntu@EC2_PUBLIC_IP
+# Then disable password auth on the server
+sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sudo systemctl restart ssh
+```
 
 ---
 
