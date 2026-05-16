@@ -141,7 +141,10 @@ server {
 ```
 
 Enable the site and reload Nginx:
-
+```
+sudo chmod o+x /home/ubuntu
+sudo chmod -R 755 /home/ubuntu/CC_Blog_application
+```
 ```bash
 sudo ln -s /etc/nginx/sites-available/student-record /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
